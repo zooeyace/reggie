@@ -12,10 +12,14 @@ import me.zyy.reggie.service.SetMealDishService;
 import me.zyy.reggie.service.SetMealService;
 import org.apache.commons.lang.StringUtils;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -36,10 +40,19 @@ public class SetMealController {
     @Resource
     private SetMealDishService setMealDishService;
 
+    @Autowired
+    @Qualifier("redisTemplate")
+    private RedisTemplate redisTemplate;
+
     @PostMapping
     public R<String> save(@RequestBody SetMealDTO setMealDTO) {
 //        log.info("{}", setMealDTO);
         setMealService.saveWithDishes(setMealDTO);
+
+        // 清理当前分类的缓存
+        String key = "set_meal" + setMealDTO.getCategoryId() + "_1";
+        redisTemplate.delete(key);
+
         return R.success(1, "套餐保存成功");
     }
 
@@ -89,6 +102,10 @@ public class SetMealController {
     @PutMapping
     public R<String> update(@RequestBody SetMealDTO setMealDTO) {
         setMealService.updateWithDishes(setMealDTO);
+
+        String key = "set_meal" + setMealDTO.getCategoryId() + "_1";
+        redisTemplate.delete(key);
+
         return R.success(1, "修改成功");
     }
 
@@ -109,12 +126,20 @@ public class SetMealController {
 
     @GetMapping("/list")
     public R<List<SetMeal>> list(@RequestParam Long categoryId, @RequestParam int status) { // 参数可以换成SetMeal setMeal
+        List<SetMeal> res;
+
+        String key = "set_meal" + categoryId + "_1";
+        res = (List<SetMeal>) redisTemplate.opsForValue().get(key);
+        if (res != null) return R.success(1, res, "套餐展示成功");
+
         LambdaQueryWrapper<SetMeal> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(SetMeal::getCategoryId, categoryId)
                 .eq(SetMeal::getStatus, status)
                 .orderByDesc(SetMeal::getUpdateTime);
+        res = setMealService.list(queryWrapper);
 
-        List<SetMeal> res = setMealService.list(queryWrapper);
+        redisTemplate.opsForValue().set(key, res, 60, TimeUnit.MINUTES);
+
         return R.success(1, res, "套餐展示成功");
     }
 }
